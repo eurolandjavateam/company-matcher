@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+	<property resource="application.properties" />
+	
+	<appender name ="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+		<encoder>
+			<pattern>
+				{"time": "%date{ISO8601}", "thread": "%thread", "level": "%level", "class": "%logger{36}", "message": "%message"}\n
+			</pattern>
+		</encoder>	
+	</appender>
+
+	<appender name="AMQP"
+		class="org.springframework.amqp.rabbit.logback.AmqpAppender">
+		<layout>
+			<pattern>
+				{
+					"time": "%date{ISO8601}",
+					"thread": "%thread",
+					"level": "%level",
+					"class": "%logger{36}",
+					"message": "%message"
+				}
+			</pattern>
+		</layout>
+		
+		<!-- RabbitMQ Connection -->
+		<host>${spring.rabbitmq.host}</host>
+		<port>${spring.rabbitmq.port}</port>
+		<username>${spring.rabbitmq.username}</username>
+		<password>${spring.rabbitmq.password}</password>
+		
+		<applicationId>spring-company-matcher</applicationId>
+		<routingKeyPattern>${matcher.rabbit.logging.routingkey}</routingKeyPattern>
+		<declareExchange>true</declareExchange>
+		<exchangeType>direct</exchangeType>
+		<exchangeName>${matcher.rabbit.logging.exchange}</exchangeName>
+		<contentType>text/plain</contentType>
+		<maxSenderRetries>2</maxSenderRetries>
+		<generateId>true</generateId>
+		<charset>UTF-8</charset>
+		<durable>true</durable>
+		<deliveryMode>PERSISTENT</deliveryMode>
+	</appender>
+	
+	<root level="${matcher.logging.level}">
+		<appender-ref ref="AMQP"/>
+		<appender-ref ref="CONSOLE"/>
+	</root>
+</configuration>
