@@ -47,7 +47,6 @@ public class MatcherService {
 			List<CrawlData> lcd = confService.restTemplate.exchange(
 					confService.HOST + confService.EUROLAND_CRAWL_DATA, HttpMethod.GET, null,
 					new ParameterizedTypeReference<List<CrawlData>>() {}).getBody();
-			lcd.sort(Comparator.comparing(CrawlData::getSourceName));
 			logger.info("Crawled Data: " + lcd.size());
 			
 			logger.info("Load Match Data");
@@ -89,10 +88,14 @@ public class MatcherService {
 				
 	 			MatchData md = matchCompanyData(cd, d);
 	
-				if(md != null) {
-					logger.info(md.getEurolandCode() + " - " + 
-					md.getCrawledName() + " - " + md.getEurolandName() + " - " + 
-					md.getCrawledSymbol() + " - " + md.getEurolandSymbol());
+				if(md == null || (
+						md.getCrawledName().equals("") &&
+						md.getCrawledIsin().equals("") &&
+						md.getCrawledSymbol().equals(""))) {
+					logger.error("Not Added: " + md.toString());
+						
+				} else {
+					logger.info("Added: " + md.toString());
 					producer.produce(md);
 				}
 			});
@@ -103,7 +106,7 @@ public class MatcherService {
 	}
 	
 	private boolean checkWithMatchData(List<MatchData> lmd, CrawlData cd) {
-		return lmd.stream().anyMatch(m -> {
+		return lmd.parallelStream().anyMatch(m -> {
 						if (m.getSourceName().equals(cd.getSourceName())) {
 							if(cd.getIsin()!=null && !cd.getIsin().equals("") &&
 								m.getCrawledIsin()!=null && !m.getCrawledIsin().equals("") &&
@@ -175,11 +178,11 @@ public class MatcherService {
 		MatchData em = new MatchData();
 		em.setSourceName(cd.getSourceName());
 		em.setEurolandCode("");
-		em.setCrawledName("");
+		em.setCrawledName(cd.getCompany());
 		em.setEurolandName("");
-		em.setCrawledSymbol("");
+		em.setCrawledSymbol(cd.getSymbol());
 		em.setEurolandSymbol("");
-		em.setCrawledIsin("");
+		em.setCrawledIsin(cd.getIsin());
 		em.setEurolandIsin("");
 		em.setIsConfirmed(false);
 		
@@ -190,14 +193,6 @@ public class MatcherService {
 					cd.getIsin().equals(d.getIsin())
 				).findAny().orElse(null);
 			if(data != null) {
-				if(cd.getCompany() != null && !cd.getCompany().equals(""))
-					em.setCrawledName(cd.getCompany());
-				
-				if(cd.getSymbol() != null && !cd.getSymbol().equals(""))
-					em.setCrawledSymbol(cd.getSymbol());
-				
-				if(cd.getIsin() != null && !cd.getIsin().equals(""))
-					em.setCrawledIsin(cd.getIsin());
 				em.setEurolandCode(data.getEurolandcode());
 				em.setEurolandName(data.getName());
 				em.setEurolandSymbol(data.getTicker());
@@ -275,15 +270,6 @@ public class MatcherService {
 		if(el.size() != 0) {
 			el.stream().filter(distinctByKey(EurolandData::getEurolandcode)).forEach(a -> {
 				if(ml.size() == 0) {
-					
-					if(cd.getCompany() != null)
-						em.setCrawledName(cd.getCompany());
-					
-					if(cd.getSymbol() != null)
-						em.setCrawledSymbol(cd.getSymbol());
-					
-					if(cd.getIsin() != null)
-						em.setCrawledIsin(cd.getIsin());
 
 					em.setEurolandCode(a.getEurolandcode());
 					em.setEurolandName(a.getName());
@@ -306,31 +292,11 @@ public class MatcherService {
 			});
 			
 		} else {
-			
-			if(cd.getCompany() != null && !cd.getCompany().equals(""))
-				em.setCrawledName(cd.getCompany());
-			
-			if(cd.getSymbol() != null && !cd.getSymbol().equals(""))
-				em.setCrawledSymbol(cd.getSymbol());
-			
-			if(cd.getIsin() != null && !cd.getIsin().equals(""))
-				em.setCrawledIsin(cd.getIsin());
 
 			em.setIsMatched(false);
 			ml.add(em);
 			
 		}
-//		System.out.println("=======================");
-//		System.out.println("Source Name: " + ml.get(0).getSourceName());
-//		System.out.println("E Code: " + ml.get(0).getEurolandCode());
-//		System.out.println("C Name: " + ml.get(0).getCrawledName());
-//		System.out.println("E Name: " + ml.get(0).getEurolandName());
-//		System.out.println("C Symbol: " + ml.get(0).getCrawledSymbol());
-//		System.out.println("E Symbol: " + ml.get(0).getEurolandSymbol());
-//		System.out.println("C Isin: " + ml.get(0).getCrawledIsin());
-//		System.out.println("E Isin: " + ml.get(0).getEurolandIsin());
-//		System.out.println("Matched: " + ml.get(0).getIsMatched());
-//		System.out.println("=======================");
 		return ml.get(0);
 	}
 	
