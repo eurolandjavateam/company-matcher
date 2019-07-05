@@ -42,7 +42,6 @@ public class MatcherService {
 	LoggerHandler logger;
 	
 	public void processMatching() {
-		try { 
 			logger.info("Load Crawled Data");
 			List<CrawlData> lcd = confService.restTemplate.exchange(
 					confService.HOST + confService.EUROLAND_CRAWL_DATA, HttpMethod.GET, null,
@@ -67,8 +66,9 @@ public class MatcherService {
 					new ParameterizedTypeReference<List<CrawlSource>>() {}).getBody();
 			lc.removeIf(f -> f.getWebsiteRegion()==null);
 			logger.info("Source with Market: " + lc.size());
-			
+			List<MatchData> lnm = new ArrayList<>();
 			if(lmd.size() != 0) {
+				lnm.addAll(lmd.stream().filter(d -> d.getIsMatched().equals(false)).collect(Collectors.toList()));
 				logger.info("Removing Data in Crawled Data that is already Confirmed with Match");
 				lcd.removeIf(cd -> checkWithMatchData(lmd, cd));
 				logger.info("Updated Crawled Data: " + lcd.size());
@@ -76,33 +76,58 @@ public class MatcherService {
 
 			logger.info("Process Matching");
 			lcd.parallelStream().forEach(cd -> {
-				
-				List<EurolandData> d = new ArrayList<>();
-
-				CrawlSource source = lc.stream().filter(c -> c.getWebsiteName().equals(cd.getSourceName())).findAny().orElse(null);
-				if(source != null && source.getWebsiteRegion() != null) {
-					d = getDataByMarket(source.getWebsiteRegion(), ed);
-				} else {
-					d = ed;
-				}
-				
-	 			MatchData md = matchCompanyData(cd, d);
+				try {
+					
+					List<EurolandData> d = new ArrayList<>();
 	
-				if(md == null || (
-						md.getCrawledName().equals("") &&
-						md.getCrawledIsin().equals("") &&
-						md.getCrawledSymbol().equals(""))) {
-					logger.error("Not Added: " + md.toString());
-						
-				} else {
-					logger.info("Added: " + md.toString());
-					producer.produce(md);
+					CrawlSource source = lc.stream().filter(c -> c.getWebsiteName().equals(cd.getSourceName())).findAny().orElse(null);
+					if(source != null && source.getWebsiteRegion() != null) {
+						d = getDataByMarket(source.getWebsiteRegion(), ed);
+					} else {
+						d = ed;
+					}
+					
+		 			MatchData md = matchCompanyData(cd.getSourceName(), cd.getCompany(), cd.getSymbol(), cd.getIsin(), d);
+		
+					if(md == null || (
+							(md.getCrawledName()==null || md.getCrawledName().equals("")) &&
+							(md.getCrawledSymbol()==null || md.getCrawledSymbol().equals("")) &&
+							(md.getCrawledIsin()==null || md.getCrawledIsin().equals("")))) {
+						logger.error("Not Added: " + md.toString());
+							
+					} else {
+						// Insert on Match Table
+						logger.info("Added: " + md.toString());
+						producer.produce(md);
+					}
+				} catch(Exception e) {
+					logger.error("Exception: " + cd.toString());
 				}
 			});
+			
+			// Updating Match Table
+			lnm.parallelStream().forEach(nm -> {
+				try {
+					List<EurolandData> d = new ArrayList<>();
+	
+					CrawlSource source = lc.stream().filter(c -> c.getWebsiteName().equals(nm.getSourceName())).findAny().orElse(null);
+					if(source != null && source.getWebsiteRegion() != null) {
+						d = getDataByMarket(source.getWebsiteRegion(), ed);
+					} else {
+						d = ed;
+					}
+					
+		 			MatchData md = matchCompanyData(nm.getSourceName(), nm.getCrawledName(), nm.getCrawledSymbol(), nm.getCrawledIsin(), d);
+					if(md != null && md.getIsMatched() == true) {
+						logger.info("Updated: " + md.toString());
+						producer.produce(md);
+					}
+				} catch(Exception e) {
+					logger.error("Exception: " + nm.toString());
+				}
+			});
+			
 			logger.info("Done Process Matching");
-		} catch (Exception e) {
-			logger.error(e.getMessage());
-		}
 	}
 	
 	private boolean checkWithMatchData(List<MatchData> lmd, CrawlData cd) {
@@ -170,27 +195,27 @@ public class MatcherService {
 		return result;
 	}
 	
-	private MatchData matchCompanyData(CrawlData cd, List<EurolandData> ed) {
+	private MatchData matchCompanyData(String source, String company, String symbol, String isin, List<EurolandData> ed) {
 		
 		List<MatchData> ml = new ArrayList<>();
 		List<EurolandData> el = new ArrayList<>();
 
 		MatchData em = new MatchData();
-		em.setSourceName(cd.getSourceName());
+		em.setSourceName(source);
 		em.setEurolandCode("");
-		em.setCrawledName(cd.getCompany());
+		em.setCrawledName(company);
 		em.setEurolandName("");
-		em.setCrawledSymbol(cd.getSymbol());
+		em.setCrawledSymbol(symbol);
 		em.setEurolandSymbol("");
-		em.setCrawledIsin(cd.getIsin());
+		em.setCrawledIsin(isin);
 		em.setEurolandIsin("");
 		em.setIsConfirmed(false);
 		
 		// Checking VIA ISIN
-		if(cd.getIsin() != null && !cd.getIsin().equals("")) {
+		if(isin != null && !isin.equals("")) {
 			EurolandData data = ed.stream().filter(d -> 
 					d.getIsin()!= null && !d.getIsin().equals("") &&
-					cd.getIsin().equals(d.getIsin())
+							isin.equals(d.getIsin())
 				).findAny().orElse(null);
 			if(data != null) {
 				em.setEurolandCode(data.getEurolandcode());
@@ -204,38 +229,38 @@ public class MatcherService {
 		}
 		
 		// Checking VIA Symbol
-		if(cd.getSymbol() != null && !cd.getSymbol().equals("") && el.size() == 0) {
+		if(symbol != null && !symbol.equals("") && el.size() == 0) {
 			List<EurolandData> data = ed.stream().filter(d -> {
-					if (d != null && cd.getSymbol().matches("[0-9]+")) {
+					if (d != null && symbol.matches("[0-9]+")) {
 						if(!rmChars(d.getTicker()).matches("[0-9]+")) {
 							return false;
 						} else {
-							return String.valueOf(Integer.parseInt(cd.getSymbol())).equals(rmChars(d.getTicker()));
+							return String.valueOf(Integer.parseInt(symbol)).equals(rmChars(d.getTicker()));
 						}
 					}
-					return rmChars(cd.getSymbol()).equals(rmChars(d.getTicker()));
+					return rmChars(symbol).equals(rmChars(d.getTicker()));
 				}).collect(Collectors.toList());
-			if(cd.getCompany() != null && !cd.getCompany().equals("") && data.size() != 0) {
+			if(company != null && !company.equals("") && data.size() != 0) {
 				HashMap<EurolandData, Integer> ei = new HashMap<>();
 				
 				
 				if(data.size() > 1) {
 					EurolandData d = data.stream().min(Comparator.comparing(a -> {
-						int dif = getLevenshteinDistance(rmChars(a.getName()),rmChars(cd.getCompany()));
+						int dif = getLevenshteinDistance(rmChars(a.getName()),rmChars(company));
 						ei.put(a, dif);
 						return dif;
 					})).orElse(null);
 					
-					if(d != null && ((rmChars(cd.getCompany()).length()*.50 > ei.get(d)) ||
-							(Pattern.compile("^" + rmChars(d.getName())).matcher(rmChars(cd.getCompany())).find() ||
-									Pattern.compile("^" + rmChars(cd.getCompany())).matcher(rmChars(d.getName())).find()))) {
+					if(d != null && ((rmChars(company).length()*.50 > ei.get(d)) ||
+							(Pattern.compile("^" + rmChars(d.getName())).matcher(rmChars(company)).find() ||
+									Pattern.compile("^" + rmChars(company)).matcher(rmChars(d.getName())).find()))) {
 						el.add(d);
 					}
 				} else {
-					if(containsHanScript(cd.getCompany()) || (data.get(0) != null && ((rmChars(cd.getCompany()).length()*.50 > 
-						getLevenshteinDistance(rmChars(data.get(0).getName()),rmChars(cd.getCompany()))) ||
-						(Pattern.compile("^" + rmChars(data.get(0).getName())).matcher(rmChars(cd.getCompany())).find() ||
-								Pattern.compile("^" + rmChars(cd.getCompany())).matcher(rmChars(data.get(0).getName())).find())))) {
+					if(containsHanScript(company) || (data.get(0) != null && ((rmChars(company).length()*.50 > 
+						getLevenshteinDistance(rmChars(data.get(0).getName()),rmChars(company))) ||
+						(Pattern.compile("^" + rmChars(data.get(0).getName())).matcher(rmChars(company)).find() ||
+								Pattern.compile("^" + rmChars(company)).matcher(rmChars(data.get(0).getName())).find())))) {
 						el.add(data.get(0));
 					} 
 				}
@@ -245,16 +270,16 @@ public class MatcherService {
 		}
 		
 		// Checking VIA Company Name
-		if(cd.getCompany() != null && !cd.getCompany().equals("") && el.size() == 0) {
+		if(company != null && !company.equals("") && el.size() == 0) {
 			List<EurolandData> data = ed.stream().filter(d -> 
-			Pattern.compile("^" + rmChars(d.getName())).matcher(rmChars(cd.getCompany())).find() ||
-			Pattern.compile("^" + rmChars(cd.getCompany())).matcher(rmChars(d.getName())).find()).collect(Collectors.toList());
+			Pattern.compile("^" + rmChars(d.getName())).matcher(rmChars(company)).find() ||
+			Pattern.compile("^" + rmChars(company)).matcher(rmChars(d.getName())).find()).collect(Collectors.toList());
 			if(data.size() == 1) {
 				el.add(data.get(0));
 			} else if (data.size() > 1) {
 				HashMap<EurolandData, Integer> ei = new HashMap<>();
 				data.stream().forEach(i -> {
-					int in = Math.abs(rmChars(i.getName()).length() - rmChars(cd.getCompany()).length());
+					int in = Math.abs(rmChars(i.getName()).length() - rmChars(company).length());
 					ei.put(i, in);
 				});
 				int min = ei.entrySet().stream().min(Comparator.comparing(c -> c.getValue())).get().getValue();
@@ -308,8 +333,9 @@ public class MatcherService {
 	private String rmChars(String s) {
 
 		String result = s.toLowerCase()
-				.replaceAll("æ", "ae")
-				.replaceAll("œ", "oe");
+				.replace("æ", "ae")
+				.replace("œ", "oe")
+				.replace("ø", "o");
 		if(!containsHanScript(result) && !containsJapaneseScript(result)) {
 			result = Normalizer.normalize(result, Form.NFD)
 					.replaceAll("[^\\p{ASCII}]", "");
